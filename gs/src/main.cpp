@@ -25,7 +25,6 @@
 
 extern "C"
 {
-#include "pigpio.h"
 }
 
 /*
@@ -53,11 +52,6 @@ static std::thread s_comms_thread;
 
 static std::mutex s_ground2air_config_packet_mutex;
 static Ground2Air_Config_Packet s_ground2air_config_packet;
-
-#ifdef TEST_LATENCY
-static uint32_t s_test_latency_gpio_value = 0;
-static Clock::time_point s_test_latency_gpio_last_tp = Clock::now();
-#endif
 
 static void comms_thread_proc()
 {
@@ -125,27 +119,6 @@ static void comms_thread_proc()
             last_comms_sent_tp = Clock::now();
             last_ping_sent_tp = Clock::now();
         }
-
-#ifdef TEST_LATENCY
-        if (s_test_latency_gpio_value == 0 && Clock::now() - s_test_latency_gpio_last_tp >= std::chrono::milliseconds(200))
-        {
-            s_test_latency_gpio_value = 1;
-            gpioWrite(17, s_test_latency_gpio_value);
-            s_test_latency_gpio_last_tp = Clock::now();
-#   ifdef TEST_DISPLAY_LATENCY
-            s_decoder.inject_test_data(s_test_latency_gpio_value);
-#   endif
-        }
-        if (s_test_latency_gpio_value != 0 && Clock::now() - s_test_latency_gpio_last_tp >= std::chrono::milliseconds(50))
-        {
-            s_test_latency_gpio_value = 0;
-            gpioWrite(17, s_test_latency_gpio_value);
-            s_test_latency_gpio_last_tp = Clock::now();
-#   ifdef TEST_DISPLAY_LATENCY
-            s_decoder.inject_test_data(s_test_latency_gpio_value);
-#   endif
-        }
-#endif        
 
 #ifdef TEST_DISPLAY_LATENCY
         std::this_thread::yield();
@@ -475,12 +448,12 @@ int main(int argc, const char* argv[])
     rx_descriptor.coding_k = s_ground2air_config_packet.fec_codec_k;
     rx_descriptor.coding_n = s_ground2air_config_packet.fec_codec_n;
     rx_descriptor.mtu = s_ground2air_config_packet.fec_codec_mtu;
-    rx_descriptor.interfaces = {"wlan1", "wlan2"};
+    rx_descriptor.interfaces = {"wlx4494fc0f73d2"};
     Comms::TX_Descriptor tx_descriptor;
     tx_descriptor.coding_k = 2;
     tx_descriptor.coding_n = 6;
     tx_descriptor.mtu = GROUND2AIR_DATA_MAX_SIZE;
-    tx_descriptor.interface = "wlan1";
+    tx_descriptor.interface = "wlx4494fc0f73d2";
     if (!s_comms.init(rx_descriptor, tx_descriptor))
         return -1;
 

@@ -61,7 +61,7 @@ CFLAGS := -std=c11
 # C++ flags
 CXXFLAGS := -std=c++17
 # C/C++ flags
-CPPFLAGS := -O3 -DNDEBUG -ffast-math -funroll-loops -mcpu=cortex-a8 -mfpu=neon -Wall -DRASPBERRY_PI $(INCLUDE)
+CPPFLAGS := -O3 -DNDEBUG -ffast-math -funroll-loops  -Wall -DRASPBERRY_PI $(INCLUDE)
 #CPPFLAGS := -g -Wall -DRASPBERRY_PI $(INCLUDE)
 
 # linker flags
