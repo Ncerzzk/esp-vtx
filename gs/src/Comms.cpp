@@ -666,25 +666,6 @@ bool Comms::init(RX_Descriptor const& rx_descriptor, TX_Descriptor const& tx_des
 
     m_impl.reset(new Impl);
 
-    m_tx_descriptor = tx_descriptor;
-    m_tx_descriptor.mtu = std::min(tx_descriptor.mtu, MAX_USER_PACKET_SIZE);
-
-    if (m_tx_descriptor.coding_k == 0 || 
-        m_tx_descriptor.coding_n < m_tx_descriptor.coding_k || 
-        m_tx_descriptor.coding_k > m_impl->tx.fec_src_packet_ptrs.size() || 
-        m_tx_descriptor.coding_n > m_impl->tx.fec_dst_packet_ptrs.size())
-    {
-        LOGE("Invalid coding params: {} / {}", m_tx_descriptor.coding_k, m_tx_descriptor.coding_n);
-        return false;
-    }
-
-    if (m_impl->tx.fec)
-        fec_free(m_impl->tx.fec);
-
-    m_impl->tx.fec = fec_new(m_tx_descriptor.coding_k, m_tx_descriptor.coding_n);
-
-    /////////
-    
     if (rx_descriptor.interfaces.empty())
     {
         LOGE("Invalid RX interfaces");
@@ -726,22 +707,7 @@ bool Comms::init(RX_Descriptor const& rx_descriptor, TX_Descriptor const& tx_des
     m_impl->rx.streaming_packet_size = m_impl->rx.transport_packet_size - m_impl->tx_packet_header_length;
     m_impl->rx.payload_size = m_rx_descriptor.mtu;
 
-    m_impl->tx.transport_packet_size = m_payload_offset + m_tx_descriptor.mtu;
-    m_impl->tx.streaming_packet_size = m_impl->tx.transport_packet_size - m_impl->tx_packet_header_length;
-    m_impl->tx.payload_size = m_tx_descriptor.mtu;
-
     /////////////////////
-
-    m_impl->tx.packet_pool.on_acquire = [this](TX::Packet& packet) 
-    {
-        if (packet.data.empty())
-        {
-            packet.data.resize(m_payload_offset);
-            prepare_tx_packet_header(packet.data.data());
-        }
-        else
-            packet.data.resize(m_payload_offset);
-    };
 
     m_impl->rx.packet_pool.on_acquire = [this](RX::Packet& packet) 
     {
@@ -788,8 +754,6 @@ bool Comms::init(RX_Descriptor const& rx_descriptor, TX_Descriptor const& tx_des
     std::set<std::string> interfaces;
     for (auto i: m_rx_descriptor.interfaces)
         interfaces.insert(i);
-    interfaces.insert(m_tx_descriptor.interface);
-
     m_impl->rx.pcal_last_block_index.resize(interfaces.size());
     m_impl->rx.pcaps.resize(interfaces.size());
     m_impl->pcaps.resize(interfaces.size());
@@ -816,7 +780,6 @@ bool Comms::init(RX_Descriptor const& rx_descriptor, TX_Descriptor const& tx_des
         index++;
     }
 
-    m_impl->tx.thread = std::thread([this]() { tx_thread_proc(); });
     for (size_t i = 0; i < m_rx_descriptor.interfaces.size(); i++)
         m_impl->rx.threads.push_back(std::thread([this, i]() { rx_thread_proc(i); }));
 

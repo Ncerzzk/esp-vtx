@@ -2,18 +2,8 @@
 BIN := gs
 
 SRCS := src/main.cpp \
-	src/droid_sans_font.cpp \
-	src/HUD.cpp \
-	src/imgui_impl_opengl3.cpp \
-	src/PI_HAL.cpp \
 	src/Comms.cpp \
-	src/Video_Decoder.cpp \
 	src/utils/radiotap/radiotap.cpp \
-	src/imgui/imgui_impl_sdl.cpp \
-	src/imgui/imgui_demo.cpp \
-	src/imgui/imgui_draw.cpp \
-	src/imgui/imgui.cpp \
-	src/imgui/misc/freetype/imgui_freetype.cpp \
 	components/common/crc.cpp \
 	components/common/fec.cpp \
 	src/fmt/format.cc \
@@ -67,16 +57,15 @@ CPPFLAGS := -O3 -DNDEBUG -ffast-math -funroll-loops  -Wall -DRASPBERRY_PI $(INCL
 # linker flags
 #LDFLAGS := -L/usr/lib -L=/opt/vc/lib -lstdc++ -lm -lpthread -lz -lrt -lfreetype -lmmal_core -lmmal_util -lmmal_vc_client -lvcos -lbcm_host -lbrcmGLESv2 -lbrcmEGL -lts
 #LDFLAGS := -L/usr/lib -L=/opt/vc/lib -lstdc++ -lm -lpthread -lz -lrt -lfreetype -lSDL2 -lGLESv2 -lturbojpeg -lmmal_core -lmmal_util -lmmal_vc_client -lvcos -lepoxy
-LDFLAGS := -L/usr/lib -L=/opt/vc/lib -lstdc++ -lm -lpthread -lz -lrt -lfreetype -lSDL2 -lturbojpeg -lpcap -lGLESv2 -lpigpio
-# flags required for dependency generation; passed to compilers
+LDFLAGS :=   -L/usr/lib/x86_64-linux-gnu/ -lstdc++ -lm 
 DEPFLAGS = -MT $@ -MD -MP -MF $(DEPDIR)/$*.Td
 
 # compile C source files
-COMPILE.c = $(CC) $(DEPFLAGS) $(CFLAGS) $(CPPFLAGS) -c -o $@
+COMPILE.c = $(CC) $(DEPFLAGS) $(CFLAGS) $(CPPFLAGS) -c -o $@ /usr/lib/x86_64-linux-gnu/libpthread.so /usr/lib/x86_64-linux-gnu/libpcap.so
 # compile C++ source files
-COMPILE.cc = $(CXX) $(DEPFLAGS) $(CXXFLAGS) $(CPPFLAGS) -c -o $@
+COMPILE.cc = $(CXX) $(DEPFLAGS) $(CXXFLAGS) $(CPPFLAGS) -c -o $@ /usr/lib/x86_64-linux-gnu/libpthread.so /usr/lib/x86_64-linux-gnu/libpcap.so
 # link object files to binary
-LINK.o = $(LD) $(LDFLAGS) $(LDLIBS) -o $@
+LINK.o = $(LD) $(LDFLAGS) $(LDLIBS) -o $@  
 # precompile step
 PRECOMPILE =
 # postcompile step
@@ -112,7 +101,7 @@ help:
 	@echo available targets: all dist clean distclean install uninstall check
 
 $(BIN): $(OBJS)
-	$(LINK.o) $^
+	$(LINK.o) $^ /usr/lib/x86_64-linux-gnu/libpthread.so /usr/lib/x86_64-linux-gnu/libpcap.so
 
 $(OBJDIR)/%.o: %.c
 $(OBJDIR)/%.o: %.c $(DEPDIR)/%.d
