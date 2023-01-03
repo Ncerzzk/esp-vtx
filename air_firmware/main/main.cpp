@@ -31,7 +31,6 @@
 
 #include "driver/gpio.h"
 #include "main.h"
-#include "queue.h"
 #include "packets.h"
 #include "safe_printf.h"
 #include "structures.h"
@@ -39,12 +38,13 @@
 #include "circular_buffer.h"
 #include "pin.h"
 
-Transmitter *transmitter=nullptr;
+
 
 typedef enum{
     IDLE,
     RUN,
-    TEST_IMAGE_SIZE
+    TEST_IMAGE_SIZE,
+    TEST_DATA_CORRECT
 }camera_state_t;
 //#define WIFI_AP
 
@@ -57,9 +57,13 @@ typedef enum{
 #endif
 
 TaskHandle_t transmit_task_handler;
+TaskHandle_t framerate_control_task_handler;
+TaskHandle_t test_data_task_handler;
 QueueHandle_t transmit_data_ready_queue;
 Ground2Air_Data_Packet s_ground2air_data_packet;
-Ground2Air_Config_Packet s_ground2air_config_packet;     
+Ground2Air_Config_Packet s_ground2air_config_packet;
+int16_t FRAME_RATE_SET=90;
+int16_t LAST_FRAME_RATE_SET=FRAME_RATE_SET;
 
 static uint32_t frame_data_size = 0;
 static bool s_video_frame_started = false;
@@ -112,10 +116,6 @@ IRAM_ATTR void update_status_led()
 {
     gpio_set_level(STATUS_LED_PIN, STATUS_LED_OFF);
 }
-
-
-uint64_t last_cap_time,cap_dts;
-uint32_t cam_count;
 
 /////////////////////////////////////////////////////////////////////
 
@@ -183,11 +183,6 @@ esp_err_t set_wifi_fixed_rate(WIFI_Rate value)
     return err;
 }
 
-WIFI_Rate get_wifi_fixed_rate()
-{
-    return s_wlan_rate;
-}
-
 
 IRAM_ATTR void packet_received_cb(void* buf, wifi_promiscuous_pkt_type_t type)
 {
@@ -217,7 +212,7 @@ void setup_wifi()
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     ESP_ERROR_CHECK(set_wifi_fixed_rate(s_ground2air_config_packet.wifi_rate));
-    ESP_ERROR_CHECK(esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_channel(11, WIFI_SECOND_CHAN_NONE));
 
     wifi_promiscuous_filter_t filter = 
     {
@@ -233,6 +228,8 @@ void setup_wifi()
     set_wlan_power_dBm(20.f);
 
     esp_log_level_set("*", ESP_LOG_DEBUG);
+
+    
 
     LOG("MEMORY After WIFI: \n");
 
@@ -253,15 +250,47 @@ uint32_t test_image_size(){
     return image_size;
 }
 
+void test_data_generate(uint8_t * data, uint32_t len){
+    static uint8_t cnt=0;
+    uint8_t temp;
+    temp=cnt;
+    for(int i=0;i<len;++i){
+        data[i]=temp;
+        temp+=3;
+    }
+    cnt++;
+}
+
+static void IRAM_ATTR test_data_task(void *pvParameters){
+    size_t pushd_size;
+    bool compeleted=false;
+
+    uint8_t * ptr;
+    while(!transmitter){vTaskDelay(100);}
+
+    printf("test data task start!\n");
+    while(true){
+        while(!compeleted){
+            ptr=transmitter->push(480,&pushd_size,&compeleted);
+            if(ptr)
+                test_data_generate(ptr,480);
+        }
+        compeleted=false;
+        xQueueSend(transmit_data_ready_queue,&pushd_size,0);
+        vTaskDelay(10);
+   }
+}
+
 IRAM_ATTR static void camera_data_available(const void* data, size_t stride, size_t count, bool last)
 {
     static bool image_size_test_start=false;
-    static bool jump_this_frame=true;
+    static uint8_t jump_frame_cnt=0;
     bool completed=false;
     size_t packet_size=0;
+    uint8_t* ptr=nullptr;
     if (data == nullptr ) //start frame
     {   
-        if(transmitter){
+        if(transmitter &&  camera_state==RUN ){
             s_video_frame_started = true;
         }
         if(camera_state==TEST_IMAGE_SIZE){
@@ -290,9 +319,13 @@ IRAM_ATTR static void camera_data_available(const void* data, size_t stride, siz
             }
         }
 
-        if(!jump_this_frame &&  camera_state==RUN && s_video_frame_started){
-            uint8_t* ptr=transmitter->push(count,&packet_size,&completed);
-            
+
+        if(!jump_frame_cnt  && s_video_frame_started){
+            ptr=transmitter->push(count,&packet_size,&completed);
+            if(!ptr){
+                printf("full!\n");
+            }
+
             for(int i=0; i<count && ptr; ++i){
                 *ptr++ = *src; src += stride;
             }
@@ -315,14 +348,21 @@ IRAM_ATTR static void camera_data_available(const void* data, size_t stride, siz
         }
 
         if(last && s_video_frame_started ){
-            s_video_frame_started=false;
-            jump_this_frame=!jump_this_frame;
-            while(!completed && camera_state==RUN){ 
-                // we have achieved the end of the frame, while the fragment is not closed yet
-                // push some 0 size packet to make it close
-                transmitter->push(0,&packet_size,&completed); 
+            if(ptr && !completed && !jump_frame_cnt){
+                while(!completed){ 
+                    // we have achieved the end of the frame, while the fragment is not closed yet
+                    // push some 0 size packet to make it close
+                    transmitter->push(0,&packet_size,&completed); 
+                }
+                xQueueSend(transmit_data_ready_queue,&packet_size,0);
             }
-            xQueueSend(transmit_data_ready_queue,&packet_size,0);
+            s_video_frame_started=false;
+
+            if(LAST_FRAME_RATE_SET != FRAME_RATE_SET){
+                jump_frame_cnt=0;
+                LAST_FRAME_RATE_SET = FRAME_RATE_SET;
+            }
+            jump_frame_cnt=(jump_frame_cnt+1)%FRAME_RATE_SET;
         }
     }
 
@@ -369,69 +409,51 @@ static void init_camera()
 }
 
 //#define SHOW_CPU_USAGE
-
-static void print_cpu_usage()
-{
-#ifdef SHOW_CPU_USAGE
-    TaskStatus_t* pxTaskStatusArray;
-    volatile UBaseType_t uxArraySize, x;
-    uint32_t ulTotalRunTime, ulStatsAsPercentage;
-
-    // Take a snapshot of the number of tasks in case it changes while this
-    // function is executing.
-    uxArraySize = uxTaskGetNumberOfTasks();
-    //LOG("%u tasks\n", uxArraySize);
-
-    // Allocate a TaskStatus_t structure for each task.  An array could be
-    // allocated statically at compile time.
-    pxTaskStatusArray = (TaskStatus_t*)heap_caps_malloc(uxArraySize * sizeof(TaskStatus_t), MALLOC_CAP_SPIRAM);
-
-    if (pxTaskStatusArray != NULL)
-    {
-        // Generate raw status information about each task.
-        uxArraySize = uxTaskGetSystemState(pxTaskStatusArray, uxArraySize, &ulTotalRunTime);
-        //LOG("%u total usage\n", ulTotalRunTime);
-
-        // For percentage calculations.
-        ulTotalRunTime /= 100UL;
-
-        // Avoid divide by zero errors.
-        if (ulTotalRunTime > 0)
-        {
-            // For each populated position in the pxTaskStatusArray array,
-            // format the raw data as human readable ASCII data
-            for (x = 0; x < uxArraySize; x++)
-            {
-                // What percentage of the total run time has the task used?
-                // This will always be rounded down to the nearest integer.
-                // ulTotalRunTimeDiv100 has already been divided by 100.
-                ulStatsAsPercentage = pxTaskStatusArray[x].ulRunTimeCounter / ulTotalRunTime;
-
-                if (ulStatsAsPercentage > 0UL)
-                {
-                    LOG("%s\t\t%u\t\t%u%%\r\n", pxTaskStatusArray[x].pcTaskName, pxTaskStatusArray[x].ulRunTimeCounter, ulStatsAsPercentage);
-                }
-                else
-                {
-                    // If the percentage is zero here then the task has
-                    // consumed less than 1% of the total run time.
-                    LOG("%s\t\t%u\t\t<1%%\r\n", pxTaskStatusArray[x].pcTaskName, pxTaskStatusArray[x].ulRunTimeCounter);
-                }
-            }
-        }
-
-        // The array is no longer needed, free the memory it consumes.
-        free(pxTaskStatusArray);
-    }
-#endif
-}
-
 static void IRAM_ATTR transmit_task(void *pvParameters){
     size_t packet_size;
+    static uint8_t cnt=0;
     while(true){
         if(xQueueReceive(transmit_data_ready_queue, &packet_size, portMAX_DELAY) == pdTRUE) {
-            transmitter->send_packet(packet_size);
+            transmitter->do_send_packet(packet_size);
+            cnt++;
+            if(cnt==30){
+                cnt=0;
+                transmitter->send_session_key();
+            }
         }
+    }
+}
+
+static void IRAM_ATTR framerate_control_task(void *pvParameters){
+    uint32_t distance_set=15;
+    static float last_err;
+    static float err_i;
+    float err,err_d;
+    float  kp,kd;
+
+    kp = 0.1f;
+    kd = 0.1f;
+    
+    while(!transmitter){
+        vTaskDelay(100);
+    }
+    while(true){
+        float distance=transmitter->get_buffer_available_size();
+        err=distance_set-distance;
+        err_d=err-last_err;
+        err_i += err;
+        float pid_out= err*kp + err_d * kd;
+
+        FRAME_RATE_SET +=(int)pid_out;
+
+        if(FRAME_RATE_SET <= 1 ){
+            FRAME_RATE_SET = 1;
+        }
+
+        FRAME_RATE_SET=6;
+
+        printf("dis:%f   frame_rate_set:%d\n",distance,FRAME_RATE_SET);
+        vTaskDelay(10);
     }
 }
 
@@ -445,7 +467,7 @@ extern "C" void app_main()
     Ground2Air_Config_Packet& ground2air_config_packet = s_ground2air_config_packet;
     ground2air_config_packet.type = Ground2Air_Header::Type::Config;
     ground2air_config_packet.size = sizeof(ground2air_config_packet);
-    ground2air_config_packet.wifi_rate = WIFI_Rate::RATE_G_6M_ODFM;
+    ground2air_config_packet.wifi_rate = WIFI_Rate::RATE_G_18M_ODFM;
 
     srand(esp_timer_get_time());
     //configure_uarts();
@@ -471,17 +493,24 @@ extern "C" void app_main()
     
     xTaskCreate(&transmit_task, "transmit_task", 4096, NULL, 9, &transmit_task_handler);
 
+
     esp_camera_fb_get(); //this will start the camera capture
 
     float buffer_size=(float)test_image_size() * 1.5f;
     printf("buffer size:%f\n",buffer_size);
-    transmitter = new Transmitter(8,12,0,(size_t) buffer_size,480);
+    transmitter = new Transmitter(5,8,0,(size_t) buffer_size,480);
+
+    xTaskCreate(&framerate_control_task, "FR_C_task", 4096, NULL, 5, &framerate_control_task_handler);
     for(int i=0;i<10;++i){
         transmitter->send_session_key();
     }
     
-
+    //esp_log_level_set("esp_wb", ESP_LOG_ERROR);
     camera_state=RUN;
+
+    if(camera_state==TEST_DATA_CORRECT){
+        xTaskCreate(&test_data_task, "TEST_DATA_TASK", 4096, NULL, 4, &test_data_task_handler);
+    }
 
     printf("MEMORY Before Loop: \n");
     heap_caps_print_heap_info(MALLOC_CAP_8BIT);

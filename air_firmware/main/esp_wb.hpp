@@ -12,12 +12,12 @@ class Transmitter
 public:
     Transmitter(int k, int n, uint8_t radio_port,size_t total_buffer_size,size_t line_size);
     virtual ~Transmitter();
-    void send_packet(const uint8_t *buf, size_t size, uint8_t flags);
-    void send_packet(size_t size);
     void send_session_key(void);
     uint8_t * push(size_t size,size_t * pushd_size,bool* completed);
     void clean_cnts(void );
-    bool busy;
+    void do_fec(uint8_t block_id);
+    void do_send_packet(size_t size);
+    uint32_t get_buffer_available_size(void);
 protected:
     void inject_packet(const uint8_t *buf, size_t size);
 
@@ -40,6 +40,7 @@ private:
     uint8_t *** block_list;
 
     size_t max_packet_size;
+    size_t *max_packet_sizes;
     uint8_t radio_port;
     // tx->rx keypair
     //uint8_t tx_secretkey[crypto_box_SECRETKEYBYTES];
@@ -54,4 +55,6 @@ private:
 
 };
 
+
+extern Transmitter *transmitter;
 #endif

@@ -40,8 +40,6 @@ enum class WIFI_Rate : uint8_t
     /* 29 */ RATE_N_72M_MCS7_S,
 };
 
-static constexpr size_t AIR2GROUND_MTU = WLAN_MAX_PAYLOAD_SIZE - 6; //6 is the fec header size
-
 ///////////////////////////////////////////////////////////////////////////////////////
 
 constexpr size_t GROUND2AIR_DATA_MAX_SIZE = 64;
@@ -83,7 +81,7 @@ struct Ground2Air_Config_Packet : Ground2Air_Header
     WIFI_Rate wifi_rate = WIFI_Rate::RATE_G_18M_ODFM;
     uint8_t fec_codec_k = 2;
     uint8_t fec_codec_n = 3;
-    uint16_t fec_codec_mtu = AIR2GROUND_MTU;
+    uint16_t fec_codec_mtu = 0;
     bool dvr_record = false;
 
     struct Camera
