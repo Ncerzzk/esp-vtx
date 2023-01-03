@@ -6,6 +6,31 @@
 #include "fec.h"
 #include "wifibroadcast.hpp"
 
+class Block{
+    public:
+    size_t max_packet_size;
+
+    // send_packet_size = packet_size + sizeof(hdr)
+    size_t * send_packet_sizes; 
+
+    uint8_t ** fragments;
+
+    Block(uint8_t fragment_num){
+        fragments=new uint8_t*[fragment_num];
+        send_packet_sizes=new size_t[fragment_num]();
+        max_packet_size=0;
+    }
+
+    uint8_t* operator[](uint8_t index){
+        return fragments[index];
+    }
+
+
+    size_t get_fragment_size(uint8_t fragment_idx){
+        return send_packet_sizes[fragment_idx];
+    }
+};
+
 
 class Transmitter
 {
@@ -37,10 +62,8 @@ private:
     uint8_t push_block_idx;
     size_t pushed_fragment_size;
     //uint8_t** block;
-    uint8_t *** block_list;
-
-    size_t max_packet_size;
-    size_t *max_packet_sizes;
+    //uint8_t *** block_list;
+    Block **block_list;
     uint8_t radio_port;
     // tx->rx keypair
     //uint8_t tx_secretkey[crypto_box_SECRETKEYBYTES];

@@ -319,13 +319,13 @@ IRAM_ATTR static void camera_data_available(const void* data, size_t stride, siz
             }
         }
 
+        printf("count:%d\n",count);
 
         if(!jump_frame_cnt  && s_video_frame_started){
             ptr=transmitter->push(count,&packet_size,&completed);
             if(!ptr){
                 printf("full!\n");
             }
-
             for(int i=0; i<count && ptr; ++i){
                 *ptr++ = *src; src += stride;
             }
@@ -450,7 +450,7 @@ static void IRAM_ATTR framerate_control_task(void *pvParameters){
             FRAME_RATE_SET = 1;
         }
 
-        FRAME_RATE_SET=6;
+        FRAME_RATE_SET=90;
 
         printf("dis:%f   frame_rate_set:%d\n",distance,FRAME_RATE_SET);
         vTaskDelay(10);
@@ -508,9 +508,9 @@ extern "C" void app_main()
     //esp_log_level_set("esp_wb", ESP_LOG_ERROR);
     camera_state=RUN;
 
-    if(camera_state==TEST_DATA_CORRECT){
-        xTaskCreate(&test_data_task, "TEST_DATA_TASK", 4096, NULL, 4, &test_data_task_handler);
-    }
+    // if(camera_state==TEST_DATA_CORRECT){
+    //     xTaskCreate(&test_data_task, "TEST_DATA_TASK", 4096, NULL, 4, &test_data_task_handler);
+    // }
 
     printf("MEMORY Before Loop: \n");
     heap_caps_print_heap_info(MALLOC_CAP_8BIT);
