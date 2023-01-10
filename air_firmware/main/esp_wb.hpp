@@ -38,7 +38,8 @@ public:
     Transmitter(int k, int n, uint8_t radio_port,size_t total_buffer_size,size_t line_size);
     virtual ~Transmitter();
     void send_session_key(void);
-    uint8_t * push(size_t size,size_t * pushd_size,bool* completed);
+    uint8_t * start_push(void);
+    void end_push(size_t size,bool* completed);
     void clean_cnts(void );
     void do_fec(uint8_t block_id);
     void do_send_packet(size_t size);
@@ -50,7 +51,7 @@ private:
     void send_block_fragment(size_t packet_size);
     void make_session_key(void);
     uint8_t combined_cnt; // combined sevral packets into 1 block fragment. used in low resolution. for example, 320*160, then we can combine 3 packets into 1 fragment.
-    uint32_t block_cnt_per_frame;
+    uint32_t block_cnt;
     fec_t* fec_p;
     int fec_k;  // RS number of primary fragments in block
     int fec_n;  // RS total number of fragments in block

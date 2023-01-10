@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 
-set(EXTRA_COMPONENT_DIRS "../components" )
+set(EXTRA_COMPONENT_DIRS "../components" $ENV{IDF_PATH}/examples/common_components/protocol_examples_common)
 set(COMPONENT_REQUIRES "common")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

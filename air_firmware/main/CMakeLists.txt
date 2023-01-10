@@ -3,5 +3,5 @@
 
 set(srcs  ../../wifibroadcast/src/fec.c )
 
-idf_component_register(SRCS  "esp_wb.cpp" "main.cpp" "${srcs}"
+idf_component_register(SRCS "wifi.cpp" "esp_wb.cpp" "main.cpp" "${srcs}"
                     INCLUDE_DIRS "." "../../wifibroadcast/src" )

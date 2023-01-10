@@ -37,7 +37,7 @@
 #include "crc.h"
 #include "circular_buffer.h"
 #include "pin.h"
-
+#include "wifi.h"
 
 
 typedef enum{
@@ -48,21 +48,13 @@ typedef enum{
 }camera_state_t;
 //#define WIFI_AP
 
-#if defined WIFI_AP
-    #define ESP_WIFI_MODE WIFI_MODE_AP
-    #define ESP_WIFI_IF WIFI_IF_AP
-#else
-    #define ESP_WIFI_MODE WIFI_MODE_STA
-    #define ESP_WIFI_IF WIFI_IF_STA
-#endif
-
 TaskHandle_t transmit_task_handler;
 TaskHandle_t framerate_control_task_handler;
 TaskHandle_t test_data_task_handler;
 QueueHandle_t transmit_data_ready_queue;
 Ground2Air_Data_Packet s_ground2air_data_packet;
 Ground2Air_Config_Packet s_ground2air_config_packet;
-int16_t FRAME_RATE_SET=90;
+int16_t FRAME_RATE_SET=6;
 int16_t LAST_FRAME_RATE_SET=FRAME_RATE_SET;
 
 static uint32_t frame_data_size = 0;
@@ -119,125 +111,6 @@ IRAM_ATTR void update_status_led()
 
 /////////////////////////////////////////////////////////////////////
 
-float s_wlan_power_dBm = 0;
-
-esp_err_t set_wlan_power_dBm(float dBm)
-{
-    constexpr float k_min = 2.f;
-    constexpr float k_max = 20.f;
-
-    dBm = std::max(std::min(dBm, k_max), k_min);
-    s_wlan_power_dBm = dBm;
-    int8_t power = static_cast<int8_t>(((dBm - k_min) / (k_max - k_min)) * 80) + 8;
-    return esp_wifi_set_max_tx_power(power);
-}
-
-float get_wlan_power_dBm()
-{
-    return s_wlan_power_dBm;
-}
-
-WIFI_Rate s_wlan_rate = WIFI_Rate::RATE_G_18M_ODFM;
-esp_err_t set_wifi_fixed_rate(WIFI_Rate value)
-{
-    uint8_t rates[] = 
-    {
-        WIFI_PHY_RATE_2M_L,
-        WIFI_PHY_RATE_2M_S,
-        WIFI_PHY_RATE_5M_L,
-        WIFI_PHY_RATE_5M_S,
-        WIFI_PHY_RATE_11M_L,
-        WIFI_PHY_RATE_11M_S,
-
-        WIFI_PHY_RATE_6M,
-        WIFI_PHY_RATE_9M,
-        WIFI_PHY_RATE_12M,
-        WIFI_PHY_RATE_18M,
-        WIFI_PHY_RATE_24M,
-        WIFI_PHY_RATE_36M,
-        WIFI_PHY_RATE_48M,
-        WIFI_PHY_RATE_54M,
-
-        WIFI_PHY_RATE_MCS0_LGI,
-        WIFI_PHY_RATE_MCS0_SGI,
-        WIFI_PHY_RATE_MCS1_LGI,
-        WIFI_PHY_RATE_MCS1_SGI,
-        WIFI_PHY_RATE_MCS2_LGI,
-        WIFI_PHY_RATE_MCS2_SGI,
-        WIFI_PHY_RATE_MCS3_LGI,
-        WIFI_PHY_RATE_MCS3_SGI,
-        WIFI_PHY_RATE_MCS4_LGI,
-        WIFI_PHY_RATE_MCS4_SGI,
-        WIFI_PHY_RATE_MCS5_LGI,
-        WIFI_PHY_RATE_MCS5_SGI,
-        WIFI_PHY_RATE_MCS6_LGI,
-        WIFI_PHY_RATE_MCS6_SGI,
-        WIFI_PHY_RATE_MCS7_LGI,
-        WIFI_PHY_RATE_MCS7_SGI,
-    };
-    //esp_err_t err = esp_wifi_internal_set_fix_rate(ESP_WIFI_IF, true, (wifi_phy_rate_t)rates[(int)value]);
-    
-    esp_err_t err = esp_wifi_config_80211_tx_rate(ESP_WIFI_IF, (wifi_phy_rate_t)rates[(int)value]);
-    if (err == ESP_OK)
-        s_wlan_rate = value;
-    return err;
-}
-
-
-IRAM_ATTR void packet_received_cb(void* buf, wifi_promiscuous_pkt_type_t type)
-{
-    //;
-}
-
-
-void setup_wifi()
-{
-    init_crc8_table();
-
-    initialize_status_led();
-
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    //ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_ap_handler, NULL, NULL));
-
-    esp_wifi_internal_set_log_level(WIFI_LOG_NONE); //to try in increase bandwidth when we spam the send function and there are no more slots available
-
-    {
-        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-        ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-        ESP_ERROR_CHECK(esp_wifi_set_mode(ESP_WIFI_MODE));
-    }
-
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-
-    ESP_ERROR_CHECK(set_wifi_fixed_rate(s_ground2air_config_packet.wifi_rate));
-    ESP_ERROR_CHECK(esp_wifi_set_channel(11, WIFI_SECOND_CHAN_NONE));
-
-    wifi_promiscuous_filter_t filter = 
-    {
-        .filter_mask = WIFI_PROMIS_FILTER_MASK_DATA
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(packet_received_cb));
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
-
-    esp_wifi_set_bandwidth(ESP_WIFI_IF,WIFI_BW_HT20);
-
-
-    set_wlan_power_dBm(20.f);
-
-    esp_log_level_set("*", ESP_LOG_DEBUG);
-
-    
-
-    LOG("MEMORY After WIFI: \n");
-
-    LOG("Initialized\n");
-}
-
-
-
 uint32_t test_image_size(){
     uint32_t image_size;
     image_size_test_cnt=5;
@@ -250,30 +123,66 @@ uint32_t test_image_size(){
     return image_size;
 }
 
-void test_data_generate(uint8_t * data, uint32_t len){
+void test_data_generate(uint8_t * data, size_t len){
+    static uint8_t cnt=0;
+    uint8_t temp;
+    temp=cnt;
+    static uint8_t frame_cnt=0;
+    data[0] =  frame_cnt;
+    for(int i=1;i<len;++i){
+        data[i]=temp;
+        temp+=3;
+    }
+    cnt++;
+    frame_cnt= (frame_cnt+1) % 14;
+}
+
+void test_data_generate2(uint8_t * data, size_t len){
     static uint8_t cnt=0;
     uint8_t temp;
     temp=cnt;
     for(int i=0;i<len;++i){
         data[i]=temp;
-        temp+=3;
+        temp+=1;
     }
-    cnt++;
+    cnt=(cnt+1)%10;
+}
+
+void static_test_data_generate(uint8_t * data,size_t len){
+    for(int i=0;i<len;++i){
+        data[i]=i;
+    }
 }
 
 static void IRAM_ATTR test_data_task(void *pvParameters){
     size_t pushd_size;
     bool compeleted=false;
 
-    uint8_t * ptr;
+    uint8_t * ptr=nullptr;
+    uint32_t len=0;
+    uint8_t index=0;
+
+
     while(!transmitter){vTaskDelay(100);}
 
     printf("test data task start!\n");
     while(true){
         while(!compeleted){
-            ptr=transmitter->push(480,&pushd_size,&compeleted);
-            if(ptr)
-                test_data_generate(ptr,480);
+            if(index!=13){
+                len=480;
+            }else{
+                len=480;//esp_random()>>(32-9);
+            }
+            //ptr=transmitter->push(len,&pushd_size,&compeleted);
+            ptr=transmitter->start_push();
+            if(ptr){
+                test_data_generate(ptr,len);
+                transmitter->end_push(len,&compeleted);
+            }
+            else{
+                printf("full\n");
+            }
+            index=(index+1)%14;
         }
         compeleted=false;
         xQueueSend(transmit_data_ready_queue,&pushd_size,0);
@@ -301,37 +210,42 @@ IRAM_ATTR static void camera_data_available(const void* data, size_t stride, siz
     {
         const uint8_t* src = (const uint8_t*)data;
 
-        if (last) //find the end marker for JPEG. Data after that can be discarded
-        {
-            const uint8_t* dptr = src + (count - 2) * stride;
-            while (dptr > src)
-            {
-                if (dptr[0] == 0xFF && dptr[stride] == 0xD9)
-                {
-                    count = (dptr - src) / stride + 2; //to include the 0xFFD9
-                    // if ((count & 0x1FF) == 0)
-                    //     count += 1; 
-                    // if ((count % 100) == 0)
-                    //     count += 1;
-                    break;
-                }
-                dptr -= stride;
-            }
-        }
+        // if (last) //find the end marker for JPEG. Data after that can be discarded
+        // {
+        //     const uint8_t* dptr = src + (count - 2) * stride;
+        //     while (dptr > src)
+        //     {
+        //         if (dptr[0] == 0xFF && dptr[stride] == 0xD9)
+        //         {
+        //             count = (dptr - src) / stride + 2; //to include the 0xFFD9
+        //             break;
+        //         }
+        //         dptr -= stride;
+        //     }
+        // }
 
-        printf("count:%d\n",count);
-
+        
         if(!jump_frame_cnt  && s_video_frame_started){
-            ptr=transmitter->push(count,&packet_size,&completed);
+            //ptr=transmitter->push(count,&packet_size,&completed);
+            ptr=transmitter->start_push();
             if(!ptr){
                 printf("full!\n");
-            }
-            for(int i=0; i<count && ptr; ++i){
-                *ptr++ = *src; src += stride;
+            }else{
+                for(int i=0; i<count; ++i){
+                    *ptr++ = *src; src += stride;
+                }
+                if(last){
+                    ptr-=2;
+                    *ptr++=0xff;
+                    *ptr++=0xd9;
+                }
+                transmitter->end_push(count,&completed);
             }
             
             if(completed){
-                xQueueSend(transmit_data_ready_queue,&packet_size,0);
+                if(xQueueSend(transmit_data_ready_queue,&packet_size,0)!=pdPASS){
+                    printf("failpush!\n");
+                }
             }
         }
 
@@ -352,9 +266,14 @@ IRAM_ATTR static void camera_data_available(const void* data, size_t stride, siz
                 while(!completed){ 
                     // we have achieved the end of the frame, while the fragment is not closed yet
                     // push some 0 size packet to make it close
-                    transmitter->push(0,&packet_size,&completed); 
+                    //transmitter->push(0,&packet_size,&completed); 
+                    ptr=transmitter->start_push();
+                    ptr[count-2]=0xff;
+                    ptr[count-1]=0xd9;
+                    transmitter->end_push(count,&completed);
                 }
                 xQueueSend(transmit_data_ready_queue,&packet_size,0);
+                
             }
             s_video_frame_started=false;
 
@@ -450,9 +369,9 @@ static void IRAM_ATTR framerate_control_task(void *pvParameters){
             FRAME_RATE_SET = 1;
         }
 
-        FRAME_RATE_SET=90;
+        FRAME_RATE_SET=1;
 
-        printf("dis:%f   frame_rate_set:%d\n",distance,FRAME_RATE_SET);
+        printf("dis:%f\n",distance);
         vTaskDelay(10);
     }
 }
@@ -460,15 +379,6 @@ static void IRAM_ATTR framerate_control_task(void *pvParameters){
 
 extern "C" void app_main()
 {
-    Ground2Air_Data_Packet& ground2air_data_packet = s_ground2air_data_packet;
-    ground2air_data_packet.type = Ground2Air_Header::Type::Data;
-    ground2air_data_packet.size = sizeof(ground2air_data_packet);
-
-    Ground2Air_Config_Packet& ground2air_config_packet = s_ground2air_config_packet;
-    ground2air_config_packet.type = Ground2Air_Header::Type::Config;
-    ground2air_config_packet.size = sizeof(ground2air_config_packet);
-    ground2air_config_packet.wifi_rate = WIFI_Rate::RATE_G_18M_ODFM;
-
     srand(esp_timer_get_time());
     //configure_uarts();
 
@@ -488,29 +398,31 @@ extern "C" void app_main()
     }
     ESP_ERROR_CHECK(ret);
 
-    setup_wifi();
+    raw_wifi_init();
     init_camera();
     
-    xTaskCreate(&transmit_task, "transmit_task", 4096, NULL, 9, &transmit_task_handler);
+    xTaskCreatePinnedToCore(&transmit_task, "transmit_task", 4096, NULL, 9, &transmit_task_handler,0);
 
 
     esp_camera_fb_get(); //this will start the camera capture
 
-    float buffer_size=(float)test_image_size() * 1.5f;
-    printf("buffer size:%f\n",buffer_size);
-    transmitter = new Transmitter(5,8,0,(size_t) buffer_size,480);
+    //float buffer_size=(float)test_image_size() * 1.5f;
+    //printf("buffer size:%f\n",buffer_size);
+    printf("MEMORY Before Transmitter: \n");
+    heap_caps_print_heap_info(MALLOC_CAP_8BIT);
+    transmitter = new Transmitter(5,8,0,(size_t) 9600,480);
 
-    xTaskCreate(&framerate_control_task, "FR_C_task", 4096, NULL, 5, &framerate_control_task_handler);
+    //xTaskCreate(&framerate_control_task, "FR_C_task", 4096, NULL, 5, &framerate_control_task_handler);
     for(int i=0;i<10;++i){
         transmitter->send_session_key();
     }
     
-    //esp_log_level_set("esp_wb", ESP_LOG_ERROR);
+    esp_log_level_set("esp_wb", ESP_LOG_ERROR);
     camera_state=RUN;
 
-    // if(camera_state==TEST_DATA_CORRECT){
-    //     xTaskCreate(&test_data_task, "TEST_DATA_TASK", 4096, NULL, 4, &test_data_task_handler);
-    // }
+    if(camera_state==TEST_DATA_CORRECT){
+        xTaskCreatePinnedToCore(&test_data_task, "TEST_DATA_TASK", 4096, NULL, 4, &test_data_task_handler,0);
+    }
 
     printf("MEMORY Before Loop: \n");
     heap_caps_print_heap_info(MALLOC_CAP_8BIT);

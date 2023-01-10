@@ -57,7 +57,7 @@
 
 static const char* TAG = "esp_wb";
 
-Transmitter *transmitter=nullptr;
+Transmitter *transmitter=0;
 QueueHandle_t fec_data_ready_queue;
 
 static void IRAM_ATTR fec_task(void *pvParameters){
@@ -75,6 +75,8 @@ static void IRAM_ATTR fec_task(void *pvParameters){
 
 TaskHandle_t fec_task_handler;
 
+// uint8_t push_buffer[MAX_FEC_PAYLOAD*2*5];
+// uint8_t fec_buffer[MAX_FEC_PAYLOAD*2*3];
 
 Transmitter::Transmitter(int k, int n, uint8_t radio_port,size_t total_buffer_size,size_t line_size):  fec_k(k), fec_n(n), block_idx(0),
                                                                 fragment_idx(0),
@@ -88,12 +90,18 @@ Transmitter::Transmitter(int k, int n, uint8_t radio_port,size_t total_buffer_si
     packet_cnt_per_frame ++;
 
     fec_p = fec_new(fec_k, fec_n);
+    uint8_t fec_fragment_num=fec_n-fec_k;
 
-    block_cnt_per_frame = 5;//packet_cnt_per_frame / fec_k;
-    //block_list = new uint8_t**[block_cnt_per_frame];
-    block_list = new Block *[block_cnt_per_frame];
+    block_cnt = 3;//packet_cnt_per_frame / fec_k;
+    //block_list = new uint8_t**[block_cnt];
+    block_list = new Block *[block_cnt];
+    //uint8_t *push_buffer=new uint8_t[MAX_FEC_PAYLOAD*block_cnt*fec_k];
+    // we apply a big buffer for push and fec here
+    // the continuous buffer has benfit when the write size larger then fragment size
+    //uint8_t *fec_buffer=new uint8_t[MAX_FEC_PAYLOAD*block_cnt*fec_fragment_num];
 
-    for(int i=0; i < block_cnt_per_frame;++i){
+
+    for(int i=0; i < block_cnt;++i){
         //block_list[i] = new uint8_t*[fec_n];
         block_list[i] = new Block(fec_n);
 
@@ -101,17 +109,31 @@ Transmitter::Transmitter(int k, int n, uint8_t radio_port,size_t total_buffer_si
         {
             block_list[i]->fragments[j] = new uint8_t[MAX_FEC_PAYLOAD];
         }
+        // for(int j=0;j<fec_k;j++){
+        //    block_list[i]->fragments[j] = push_buffer + i*MAX_FEC_PAYLOAD*fec_k + j*MAX_FEC_PAYLOAD;
+        // }
+        // for(int j=fec_k;j<fec_n;j++){
+        //    block_list[i]->fragments[j] = fec_buffer + i*MAX_FEC_PAYLOAD*fec_fragment_num + (j-fec_k)*MAX_FEC_PAYLOAD; 
+        // }
     }
 
-    ESP_LOGI(TAG,"block_cnt_per_frame:%u  packet_cnt_per_frame:%u combined_cnt:%d \n",block_cnt_per_frame,packet_cnt_per_frame,combined_cnt);
+    ESP_LOGI(TAG,"block_cnt:%u  packet_cnt_per_frame:%u combined_cnt:%d \n",block_cnt,packet_cnt_per_frame,combined_cnt);
     // aim to locate 1 frame in the blocks
     make_session_key();
 
     fec_data_ready_queue=xQueueCreate(32, sizeof(uint8_t));
-    xTaskCreate(&fec_task, "fec_task", 4096, NULL, 9, &fec_task_handler);
+    //xTaskCreate(&fec_task, "fec_task", 4096, NULL, 9, &fec_task_handler);
+    xTaskCreatePinnedToCore(&fec_task, "fec_task", 4096, NULL, 9, &fec_task_handler,0);
 
-    current_block_idx=block_cnt_per_frame-1;
+    current_block_idx=block_cnt-1;
     fragment_idx=0;
+
+    push_fragment_idx=0;
+    push_block_idx=0;
+
+    pushed_fragment_size=0;
+
+    ESP_LOGI(TAG,"Transmitter Inited!\n");
 }
 
 Transmitter::~Transmitter()
@@ -149,8 +171,9 @@ void  Transmitter::inject_packet(const uint8_t *buf, size_t size)
     uint8_t *p = txbuf;
 
     // radiotap header
-    //memcpy(p, radiotap_header, sizeof(radiotap_header));     // may be optimized later
+    //memcpy(p, radiotap_header, sizeof(radiotap_header));     
     //p += sizeof(radiotap_header);
+    // we don'nt need do this, esp32 api will do it for us
 
     // ieee80211 header
     memcpy(p, ieee80211_header, sizeof(ieee80211_header));
@@ -171,7 +194,7 @@ void  Transmitter::inject_packet(const uint8_t *buf, size_t size)
 
 void Transmitter::send_block_fragment(size_t packet_size)
 {
-    Block block=*block_list[current_block_idx];
+    Block &block=*block_list[current_block_idx];
     wblock_hdr_t *block_hdr = (wblock_hdr_t*)ciphertext;
     long long unsigned int ciphertext_len;
 
@@ -183,6 +206,7 @@ void Transmitter::send_block_fragment(size_t packet_size)
     if(packet_size==0){
         return ;
     }
+
     // encrypted payload
     // encrypt 1000 bytes ~= 400 us
     TEST_TIME_FUNC(crypto_aead_chacha20poly1305_encrypt(ciphertext + sizeof(wblock_hdr_t), &ciphertext_len,
@@ -217,12 +241,12 @@ void Transmitter::clean_cnts(void ){
 
 uint32_t Transmitter::get_buffer_available_size(void){
     uint32_t distance=0;
-    // eg: push_block_idx = 2, curr_block_idx=1, block_cnt_per_frame=5,fec_k=8
+    // eg: push_block_idx = 2, curr_block_idx=1, block_cnt=5,fec_k=8
     // push_fragment=3, frag_idx=2 
     // distance = (5 - 2 + 1 -1)* fec_k = 3 * 8 
     // distance += (8 - 3) + 2 + 1
     if(push_block_idx>current_block_idx){
-        distance =(block_cnt_per_frame - push_block_idx + current_block_idx - 1 )*fec_k;
+        distance =(block_cnt - push_block_idx + current_block_idx - 1 )*fec_k;
     }else{
         distance = (current_block_idx - push_block_idx -1)*fec_k;
     }
@@ -231,66 +255,69 @@ uint32_t Transmitter::get_buffer_available_size(void){
     return distance;
 }
 
-uint8_t * Transmitter::push(size_t size,size_t * pushd_size,bool* completed){
-
+uint8_t * Transmitter::start_push(void){
     if(push_block_idx == current_block_idx ){
         return nullptr;// the buffer is full
     }
 
-    Block block=*block_list[push_block_idx];
+    Block &block=*block_list[push_block_idx];
     wpacket_hdr_t *packet_hdr = (wpacket_hdr_t *)(block[push_fragment_idx]);
     uint8_t * result_ptr;
 
     result_ptr = block[push_fragment_idx] + sizeof(wpacket_hdr_t) + pushed_fragment_size;
+
+    return result_ptr;
+}
+
+void Transmitter::end_push(size_t size,bool* completed){
+    Block &block=*block_list[push_block_idx];
+    wpacket_hdr_t *packet_hdr = (wpacket_hdr_t *)(block[push_fragment_idx]);
+
     pushed_fragment_size += size;
-    fragment_packet_cnt++;
+    fragment_packet_cnt++; 
 
-
-    *pushd_size=pushed_fragment_size;
     packet_hdr->packet_size = htobe16(pushed_fragment_size); // edit the packet_size
 
-    ESP_LOGI(TAG,"pushd.  push_fragment_idx:%u  push_block_idx:%u max_size:%d push_size:%d\n",push_fragment_idx,push_block_idx,block.max_packet_size,size);
-    
     if(fragment_packet_cnt != combined_cnt){
         // TODO: this implement should be changed later.
         // we should use the size to determined the fragment is closed or not.
         *completed=false;
-        return result_ptr;
-    }
+    }else{
+        *completed=true;
+        // the fragment has been full
+        block.send_packet_sizes[push_fragment_idx] = pushed_fragment_size + sizeof(wpacket_hdr_t);
+        block.max_packet_size = max(block.max_packet_size,sizeof(wpacket_hdr_t) + pushed_fragment_size);   // TODO: atomic race!
 
-    // the fragment has been full
-    block.send_packet_sizes[push_fragment_idx] = pushed_fragment_size + sizeof(wpacket_hdr_t);
-    block.max_packet_size = max(block.max_packet_size,sizeof(wpacket_hdr_t) + pushed_fragment_size);   // TODO: atomic race!
+        fragment_packet_cnt=0;
+        pushed_fragment_size=0;
+        push_fragment_idx++; // change to next fragment
 
+        if(push_fragment_idx == fec_k){
+            // the block has been full
+            // change to next block, and send signal to fec this block
+            push_fragment_idx = 0;
+            xQueueSend(fec_data_ready_queue,&push_block_idx,0);
+            push_block_idx++;
 
-    *completed=true;
-    fragment_packet_cnt=0;
-    pushed_fragment_size=0;
-    push_fragment_idx++; // change to next fragment
-
-    if(push_fragment_idx == fec_k){
-        // the block has been full
-        // change to next block, and send signal to fec this block
-        push_fragment_idx = 0;
-        xQueueSend(fec_data_ready_queue,&push_block_idx,0);
-        push_block_idx++;
-
-        if(push_block_idx == block_cnt_per_frame){
-            push_block_idx=0;
+            if(push_block_idx == block_cnt){
+                push_block_idx=0;
+            }
         }
     }
-    
-    return result_ptr;
 }
+
 
 extern QueueHandle_t transmit_data_ready_queue;
 void Transmitter::do_fec(uint8_t block_id){
-    Block block=*block_list[block_id];
+    Block &block=*block_list[block_id];
     size_t temp=0;
-    ESP_LOGI(TAG,"do fec. block:%d  max_size:%d\n",block_id,block.max_packet_size);
+    
     TEST_TIME_FUNC(fec_encode(fec_p, (const uint8_t**)block.fragments, block.fragments + fec_k, block.max_packet_size),FEC);
+
     for(int i=fec_k; i< fec_n; ++i){
-        xQueueSend(transmit_data_ready_queue,&temp,0);
+        if(xQueueSend(transmit_data_ready_queue,&temp,0)!=pdPASS){
+            printf("error in do fec!\n");
+        }
         block.send_packet_sizes[i] = block.max_packet_size;
         // the value of sending event is useless, edit this later
     }
@@ -301,7 +328,6 @@ void Transmitter::do_send_packet(size_t size){
     // the parameter size is useless, need to be removed
     Block * block=block_list[current_block_idx];
     send_block_fragment(block->send_packet_sizes[fragment_idx]); 
-
     fragment_idx++;
 
     if(fragment_idx == fec_n){
@@ -310,7 +336,7 @@ void Transmitter::do_send_packet(size_t size){
         fragment_idx = 0;
     }
 
-    if(current_block_idx == block_cnt_per_frame){
+    if(current_block_idx == block_cnt){
         current_block_idx = 0;
     }
 

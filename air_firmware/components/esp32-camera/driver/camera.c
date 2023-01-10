@@ -655,6 +655,7 @@ static void IRAM_ATTR dma_filter_task(void *pvParameters)
                 buf_idx &= 0x7FFFFFFF;
                 dma_filter_buffer(buf_idx, last);
             }
+            
         }
     }
 }
@@ -978,6 +979,7 @@ esp_err_t camera_init(const camera_config_t* config)
         goto fail;
     }
 
+#define CONFIG_CAMERA_CORE1 1
     //ToDo: core affinity?
 #if CONFIG_CAMERA_CORE0
     if (!xTaskCreatePinnedToCore(&dma_filter_task, "dma_filter", 4096, NULL, 10, &s_state->dma_filter_task, 0))
