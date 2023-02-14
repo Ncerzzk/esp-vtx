@@ -49,7 +49,7 @@
 
 
 /*Select Camera Model*/
-#define CAMERA_MODEL_AI_THINKER
+#define CAMERA_MODEL_ESP_VTX
 
 #if defined(CAMERA_MODEL_WROVER_KIT)
 #define PWDN_GPIO_NUM    -1
@@ -144,6 +144,25 @@
 #define Y2_GPIO_NUM       17
 #define VSYNC_GPIO_NUM    22
 #define HREF_GPIO_NUM     26
+#define PCLK_GPIO_NUM     21
+
+#elif defined(CAMERA_MODEL_ESP_VTX)
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM     23
+#define SIOD_GPIO_NUM     27
+#define SIOC_GPIO_NUM     26
+
+#define Y9_GPIO_NUM       18
+#define Y8_GPIO_NUM       19
+#define Y7_GPIO_NUM       22
+#define Y6_GPIO_NUM       35
+#define Y5_GPIO_NUM       39
+#define Y4_GPIO_NUM       36
+#define Y3_GPIO_NUM       38
+#define Y2_GPIO_NUM       34
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     5
 #define PCLK_GPIO_NUM     21
 
 #else
@@ -376,7 +395,7 @@ Circular_Buffer s_sd_fast_buffer(new uint8_t[SD_FAST_BUFFER_SIZE], SD_FAST_BUFFE
 //this slow buffer is used to buffer data that is about to be written to SD. The reason it's this big is because SD card write speed fluctuated a lot and 
 // sometimes it pauses for a few hundred ms. So to avoid lost data, I have to buffer it into a big enoigh buffer.
 //The data is written to the sd card by the sd_write_task, in chunks of SD_WRITE_BLOCK_SIZE.
-static constexpr size_t SD_SLOW_BUFFER_SIZE = 3 * 1024 * 1024;
+static constexpr size_t SD_SLOW_BUFFER_SIZE = 0; // 3 * 1024 * 1024;
 Circular_Buffer s_sd_slow_buffer((uint8_t*)heap_caps_malloc(SD_SLOW_BUFFER_SIZE, MALLOC_CAP_SPIRAM), SD_SLOW_BUFFER_SIZE);
 
 //Cannot write to SD directly from the slow, SPIRAM buffer as that causes the write speed to plummet. So instead I read from the slow buffer into
@@ -1352,7 +1371,7 @@ static void init_camera()
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000;
     config.pixel_format = PIXFORMAT_JPEG;
-    config.frame_size = FRAMESIZE_VGA;
+    config.frame_size = FRAMESIZE_HQVGA;
     config.jpeg_quality = 4;
     config.fb_count = 3;
 
@@ -1365,7 +1384,7 @@ static void init_camera()
     }
 
     sensor_t *s = esp_camera_sensor_get();
-    s->set_framesize(s, FRAMESIZE_VGA);
+    s->set_framesize(s, FRAMESIZE_HQVGA);
     s->set_saturation(s, 0);
 }
 
@@ -1470,18 +1489,18 @@ extern "C" void app_main()
         if (res != pdPASS)
             LOG("Failed wifi rx task: %d\n", res);
     }
-    {
-        int core = tskNO_AFFINITY;
-        BaseType_t res = xTaskCreatePinnedToCore(&sd_write_proc, "SD Write", 4096, nullptr, 1, &s_sd_write_task, core);
-        if (res != pdPASS)
-            LOG("Failed sd write task: %d\n", res);
-    }
-    {
-        int core = tskNO_AFFINITY;
-        BaseType_t res = xTaskCreatePinnedToCore(&sd_enqueue_proc, "SD Enq", 1024, nullptr, 1, &s_sd_enqueue_task, core);
-        if (res != pdPASS)
-            LOG("Failed sd enqueue task: %d\n", res);
-    }
+    // {
+    //     int core = tskNO_AFFINITY;
+    //     BaseType_t res = xTaskCreatePinnedToCore(&sd_write_proc, "SD Write", 4096, nullptr, 1, &s_sd_write_task, core);
+    //     if (res != pdPASS)
+    //         LOG("Failed sd write task: %d\n", res);
+    // }
+    // {
+    //     int core = tskNO_AFFINITY;
+    //     BaseType_t res = xTaskCreatePinnedToCore(&sd_enqueue_proc, "SD Enq", 1024, nullptr, 1, &s_sd_enqueue_task, core);
+    //     if (res != pdPASS)
+    //         LOG("Failed sd enqueue task: %d\n", res);
+    // }
     esp_camera_fb_get(); //this will start the camera capture
 
     printf("MEMORY Before Loop: \n");

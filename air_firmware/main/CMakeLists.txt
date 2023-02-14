@@ -4,5 +4,5 @@
 set(srcs 
     main.cpp queue.cpp)
 
-idf_component_register(SRCS "${srcs}"
+idf_component_register(SRCS "main.cpp" "${srcs}"
                     INCLUDE_DIRS "")
