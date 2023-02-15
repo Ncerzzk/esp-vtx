@@ -21,6 +21,12 @@
 #include "packets.h"
 #include <thread>
 #include "main.h"
+#include <turbojpeg.h>
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include "stdint.h"
+
 
 extern "C"
 {
@@ -50,6 +56,79 @@ static std::thread s_comms_thread;
 
 static std::mutex s_ground2air_config_packet_mutex;
 static Ground2Air_Config_Packet s_ground2air_config_packet;
+using namespace std;
+static int sock;
+string string_format(const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    size_t size = vsnprintf(nullptr, 0, format, args) + 1; // Extra space for '\0'
+    va_end(args);
+    unique_ptr<char[]> buf(new char[size]);
+    va_start(args, format);
+    vsnprintf(buf.get(), size, format, args);
+    va_end(args);
+    return string(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
+}
+
+int socket_init(){
+        struct sockaddr_un saddr;
+        struct sockaddr_un saddr_remote; 
+        int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+        if (fd < 0) throw std::runtime_error(string_format("Error opening socket: %s", strerror(errno)));
+
+        bzero((char *) &saddr, sizeof(saddr));
+        saddr.sun_family = AF_UNIX;
+        strcpy(saddr.sun_path, "/home/ncer/testsocket");
+        unlink("/home/ncer/testsocket");
+        int len = strlen(saddr.sun_path) + sizeof(saddr.sun_family);
+        if( bind(fd, (struct sockaddr*)&saddr, len)  != 0)
+        {
+            throw std::runtime_error(string_format("Connect error: %s", strerror(errno)));
+        }
+
+        if( listen(fd, 5) != 0 )
+        {
+            throw std::runtime_error(string_format("Connect error: %s", strerror(errno)));
+        }
+
+
+
+        uint32_t temp=0;
+        int sockfd;
+        if( (sockfd = accept(fd, (struct sockaddr*)&saddr_remote, &temp)) != -1 ){
+            printf("connected!\n");
+        }
+        return sockfd;
+}
+
+uint8_t raw_data[800*800*3];
+
+
+inline bool jpeg_decode(uint8_t * data,uint32_t len){
+    int width, height;
+    int inSubsamp, inColorspace;
+
+    tjhandle tjInstance = tjInitDecompress();
+    if (tjDecompressHeader3(tjInstance, data, len, &width, &height, &inSubsamp, &inColorspace) < 0){
+        tjDestroy(tjInstance);
+        printf("Jpeg header error: %s\n", tjGetErrorStr());
+        return false;
+    }
+
+    printf("decode jpeg, width:%d height:%d\n",width,height);
+
+    int flags = TJ_FASTUPSAMPLE | TJFLAG_FASTDCT;
+
+    if (tjDecompress2(tjInstance, data, len, raw_data, width, 0/*pitch*/, height, TJPF_BGR, flags) < 0){
+        //tjDestroy(m_impl->tjInstance);
+        printf("decompressing JPEG image: %s\n", tjGetErrorStr());
+        return false;
+    }
+
+    return true;
+}
+
 
 static void comms_thread_proc()
 {
@@ -126,7 +205,7 @@ static void comms_thread_proc()
 
             total_data += rx_data.size;
             min_rssi = std::min(min_rssi, rx_data.rssi);
-            LOGI("OK Video frame {}, {} {} - CRC OK {}. ", air2ground_video_packet.frame_index, (int)air2ground_video_packet.part_index, payload_size, crc);
+            //LOGI("OK Video frame {}, {} {} - CRC OK {}. ", air2ground_video_packet.frame_index, (int)air2ground_video_packet.part_index, payload_size, crc);
 
             if ((air2ground_video_packet.frame_index + 200 < video_frame_index) ||                 //frame from the distant past? TX was restarted
                 (air2ground_video_packet.frame_index > video_frame_index)) //frame from the future and we still have other frames enqueued? Stale data
@@ -153,6 +232,9 @@ static void comms_thread_proc()
                 {
                     LOGI("Received frame {}, {}, size {}", video_frame_index, video_next_part_index, video_frame.size());
                     //s_decoder.decode_data(video_frame.data(), video_frame.size());
+
+                    //jpeg_decode(video_frame.data(),video_frame.size());
+                    send(sock,video_frame.data(),video_frame.size(),MSG_DONTWAIT);
                     video_next_part_index = 0;
                     video_frame.clear();
                 }
@@ -181,6 +263,8 @@ int run()
     return 0;
 }
 
+
+
 int main(int argc, const char* argv[])
 {
     init_crc8_table();
@@ -189,7 +273,7 @@ int main(int argc, const char* argv[])
     rx_descriptor.coding_k = s_ground2air_config_packet.fec_codec_k;
     rx_descriptor.coding_n = s_ground2air_config_packet.fec_codec_n;
     rx_descriptor.mtu = s_ground2air_config_packet.fec_codec_mtu;
-    rx_descriptor.interfaces = {"wlx002101000687","wlx00127b22ac39"};
+    rx_descriptor.interfaces = {"wlx00127b22ac39"};
     Comms::TX_Descriptor tx_descriptor;
     tx_descriptor.coding_k = 2;
     tx_descriptor.coding_n = 6;
@@ -202,7 +286,8 @@ int main(int argc, const char* argv[])
     {
         system(fmt::format("iwconfig {} channel 11", itf).c_str());
     }
-
+    printf("init socket .. \n");
+    sock=socket_init();
     int result = run();
     return result;
 }

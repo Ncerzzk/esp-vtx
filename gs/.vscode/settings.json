@@ -71,6 +71,11 @@
         "__tree": "cpp",
         "map": "cpp",
         "set": "cpp",
-        "condition_variable": "cpp"
+        "condition_variable": "cpp",
+        "*.tcc": "cpp",
+        "memory_resource": "cpp",
+        "numeric": "cpp",
+        "random": "cpp",
+        "cinttypes": "cpp"
     }
 }
