@@ -5,4 +5,4 @@ set(srcs
     main.cpp queue.cpp)
 
 idf_component_register(SRCS "main.cpp" "${srcs}"
-                    INCLUDE_DIRS "")
+                    INCLUDE_DIRS "../components/esp32-camera/target/private_include/")
