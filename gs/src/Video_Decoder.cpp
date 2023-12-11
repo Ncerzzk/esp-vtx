@@ -303,6 +303,10 @@ size_t Video_Decoder::lock_output()
         LOGI("Texture: {}", output.texture);
     }
 
+#if defined(IMGUI_IMPL_OPENGL_ES2)
+    GLCHK(glBindTexture(GL_TEXTURE_2D, output.texture));
+    GLCHK(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, output.width, output.height, 0, GL_RGB, GL_UNSIGNED_BYTE, output.rgb_data.data()));
+#else
     //calculate total size
     GLCHK(glBindBuffer(GL_PIXEL_UNPACK_BUFFER, output.pbo));
     size_t pbo_size = output.rgb_data.size();
@@ -325,6 +329,7 @@ size_t Video_Decoder::lock_output()
     GLCHK(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, output.width, output.height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0));
 
     GLCHK(glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0));
+#endif
 
     m_texture = output.texture;
     m_resolution = ImVec2((float)output.width, (float)output.height);
